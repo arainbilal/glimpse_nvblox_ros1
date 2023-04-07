@@ -144,6 +144,21 @@ target_include_directories(nvblox_node SYSTEM PUBLIC
   ${catkin_INCLUDE_DIRS}
 )
 
+# Depth image to pointcloud
+add_executable(gpu_depth_to_cloud_node
+  src/gpu_depth_to_cloud_node.cpp
+)
+
+target_link_libraries(gpu_depth_to_cloud_node ${PROJECT_NAME}_lib)
+
+add_dependencies(gpu_depth_to_cloud_node
+  ${catkin_EXPORTED_TARGETS}
+)
+
+target_include_directories(gpu_depth_to_cloud_node SYSTEM PUBLIC
+  ${catkin_INCLUDE_DIRS}
+)
+
 
 add_executable(3dmatch_node
   src/3dmatch_node.cpp

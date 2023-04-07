@@ -1,0 +1,31 @@
+<launch>
+	<arg name="record_data" default="0"/>
+	<arg name="bag_dir" default="$(find nvblox_ros)/data"/>
+	<arg name="bag" default="test_depth_high_res.bag"/>
+	
+	<!-- If rosbag time is zero and use_sim_time=true then ros::time::now()=0 -->
+	<param name="use_sim_time" value="false"/>
+	<node pkg="rosbag" name="play" type="play" output="screen" args="-d 2 $(arg bag_dir)/$(arg bag)" respawn="false">
+	</node>
+
+	<!--depth to pointcloud node -->
+	<node name="gpu_depth_to_cloud_node" pkg="nvblox_ros" type="gpu_depth_to_cloud_node" output="screen">
+	</node>
+
+	<!-- rviz -->
+	<node name="rviz" pkg="rviz" type="rviz" args="-d $(find nvblox_ros)/rviz/gpu_depth_to_cloud.rviz" />
+
+	<group if="$(arg record_data)">
+    <node pkg="rosbag" name="record" type="record" output="screen" 
+      args="-O $(arg bag_dir)/test_depth.bag
+      /camera_left/aligned_depth_to_color/camera_info
+      /camera_left/aligned_depth_to_color/image_raw
+      /camera_right/aligned_depth_to_color/camera_info
+      /camera_right/aligned_depth_to_color/image_raw
+      /tf
+      /tf_static" >
+    </node>
+  </group>
+
+
+</launch>

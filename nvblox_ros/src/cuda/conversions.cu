@@ -373,4 +373,159 @@ void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
   checkCudaErrors(cudaPeekAtLastError());
 }
 
+__global__ void populateCloudFromImageKernel(const float* image,
+                                             int rows,
+                                             int cols,
+                                             const Camera camera,
+                                             int raycast_subsampling_factor,
+                                             PclPoint* pointcloud,
+                                             int* max_index)
+{
+    const int ray_idx_row = blockIdx.x * blockDim.x + threadIdx.x;
+    const int ray_idx_col = blockIdx.y * blockDim.y + threadIdx.y;
+    int pixel_row = ray_idx_row * raycast_subsampling_factor;
+    int pixel_col = ray_idx_col * raycast_subsampling_factor;
+
+    // Hooray we do nothing.
+    if (pixel_row >= (rows + raycast_subsampling_factor - 1) ||
+        pixel_col >= (cols + raycast_subsampling_factor - 1))
+    {
+      return;
+    }
+    else
+    {
+      // Move remaining overhanging pixels back to the borders.
+      if (pixel_row >= rows)
+      {
+        pixel_row = rows - 1;
+      }
+      if (pixel_col >= cols)
+      {
+        pixel_col = cols - 1;
+      }
+    }
+
+    float depth = image::access<float>(pixel_row, pixel_col, cols, image);
+    if ((depth <= 0.0f) || std::isnan(depth))
+    {
+      return;
+    }
+    else
+    {
+        ///printf("(%d,%d) %f\n",pixel_row, pixel_col, depth);
+        /// Copy it to the PCL
+        float center_x = camera.cu();//model.cx();
+        float center_y = camera.cv();//model.cy();
+        float constant_x = 1.0 / camera.fu();//model.fx();
+        float constant_y = 1.0 / camera.fv();//model.fy();
+        //float bad_point = std::numeric_limits<float>::quiet_NaN();
+
+        int next_index = atomicAdd(max_index, 1);
+        printf("%d\n", next_index);
+#if(0)
+        PclPoint& point = pointcloud[next_index];
+        point.x = (pixel_row - center_x) * depth * constant_x;
+        point.y = (pixel_col - center_y) * depth * constant_y;
+        point.z = depth;
+        point.intensity = 0.0;
+#endif
+    }
+
+}
+
+#if(0)
+void RosConverter::pointcloudFromDepth(const DepthImage& depth_frame, const Camera& camera, sensor_msgs::PointCloud2* pointcloud)
+{
+    /// Reference: nvblox_ros/src/lib/conversions/pointcloud_conversion.cu
+    const int num_points = depth_frame.rows() * depth_frame.cols();
+    std::cout<< "Number of points: " << num_points << std::endl;
+
+    /// Copy the depth points into pinned host memory
+    depth_points_host_.clear();
+    float center_x = camera.cu();//model.cx();
+    float center_y = camera.cv();//model.cy();
+    float constant_x = 1.0 / camera.fu();//model.fx();
+    float constant_y = 1.0 / camera.fv();//model.fy();
+
+}
+#endif
+
+#if(1)
+void RosConverter::pointcloudFromDepth(const DepthImage& depth_frame, const Camera& camera, sensor_msgs::PointCloud2* pointcloud)
+{
+    /// Reference: See frustum.cu in nvblox
+    unsigned int raycast_subsampling_factor_ = 1;
+    const int num_subsampled_rows = std::ceil(static_cast<float>(depth_frame.rows() + 1)/static_cast<float>(raycast_subsampling_factor_));
+    const int num_subsampled_cols = std::ceil(static_cast<float>(depth_frame.cols() + 1) /static_cast<float>(raycast_subsampling_factor_));
+    /// We'll do warps of 32x32 pixels in the image. This is 1024 threads which is in the recommended 512-1024 range.
+    constexpr int kThreadDim = 16;
+    const int rounded_rows = static_cast<int>(std::ceil(num_subsampled_rows / static_cast<float>(kThreadDim)));
+    const int rounded_cols = static_cast<int>(std::ceil(num_subsampled_cols / static_cast<float>(kThreadDim)));
+
+    dim3 block_dim(rounded_rows, rounded_cols);
+    dim3 thread_dim(kThreadDim, kThreadDim);
+    std::cout << "Processing point cloud from depth image" << std::endl;
+    std::cout << "Rounded rows: " << rounded_rows << std::endl;
+    std::cout << "Rounded rows: " << rounded_cols << std::endl;
+    std::cout << "Threds dimension: " << kThreadDim << std::endl;
+
+
+    /// Create an output size variable.
+    if (!max_index_device_)
+    {
+        max_index_device_ = make_unified<int>(MemoryType::kDevice);
+    }
+    max_index_device_.setZero();
+
+    /// Allocate a GPU pointcloud.
+    size_t num_points = depth_frame.rows()*depth_frame.cols();
+
+    pointcloud_device_.reserve(num_points);
+
+    /// !!! Check block_dim, thread_dim and pointcloud_device_.reserve!!!!
+    populateCloudFromImageKernel<<<block_dim, thread_dim, 0, cuda_stream_>>>(
+      depth_frame.dataConstPtr(),depth_frame.rows(),depth_frame.cols(),camera,
+      raycast_subsampling_factor_,pointcloud_device_.data(), max_index_device_.get());
+
+    checkCudaErrors(cudaStreamSynchronize(cuda_stream_));
+    checkCudaErrors(cudaPeekAtLastError());
+
+#if(0)
+      /// Copy the pointcloud out
+      max_index_host_ = max_index_device_.clone(MemoryType::kHost);
+
+      size_t output_size = sizeof(PclPoint) * *max_index_host_;
+      pointcloud->data.resize(output_size);
+
+      // Copy over all the points.
+      cudaMemcpy(pointcloud->data.data(), pointcloud_device_.data(), output_size, cudaMemcpyDeviceToHost);
+
+      std::cout << "Output size: " << output_size << std::endl;
+      // Fill the other fields in the pointcloud message.
+      pointcloud->height = 1;
+      pointcloud->width = *max_index_host_;
+      pointcloud->point_step = sizeof(PclPoint);
+      pointcloud->row_step = output_size;
+
+      // Populate the fields.
+      sensor_msgs::PointField point_field;
+      point_field.name = "x";
+      point_field.datatype = sensor_msgs::PointField::FLOAT32;
+      point_field.offset = 0;
+      point_field.count = 1;
+
+      pointcloud->fields.push_back(point_field);
+      point_field.name = "y";
+      point_field.offset += sizeof(float);
+      pointcloud->fields.push_back(point_field);
+      point_field.name = "z";
+      point_field.offset += sizeof(float);
+      pointcloud->fields.push_back(point_field);
+      point_field.name = "intensity";
+      point_field.offset += sizeof(float);
+      pointcloud->fields.push_back(point_field);
+#endif
+}
+#endif
+
 }  // namespace nvblox

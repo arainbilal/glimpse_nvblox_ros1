@@ -64,6 +64,9 @@ public:
     const sensor_msgs::ImageConstPtr & image_msg,
     DepthImage * depth_frame);
 
+  /// Convert depth to PCL
+  void pointcloudFromDepth(const DepthImage& depth_frame, const Camera& camera, sensor_msgs::PointCloud2* pointcloud);
+
   bool colorImageFromImageMessage(
     const sensor_msgs::ImageConstPtr & image_msg,
     ColorImage * color_image);
@@ -131,6 +134,8 @@ private:
 
   device_vector<Index3D> block_indices_device_;
   device_vector<PclPoint> pointcloud_device_;
+  host_vector<Vector3f> depth_points_host_;
+  device_vector<Vector3f> depth_points_device_;
   unified_ptr<int> max_index_device_;
   unified_ptr<int> max_index_host_;
 };
