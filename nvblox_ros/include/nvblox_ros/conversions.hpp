@@ -64,8 +64,8 @@ public:
     const sensor_msgs::ImageConstPtr & image_msg,
     DepthImage * depth_frame);
 
-  /// Convert depth to PCL
-  void pointcloudFromDepth(const DepthImage& depth_frame, const Camera& camera, sensor_msgs::PointCloud2* pointcloud);
+  /// Convert depth to 3D vector
+  void pointcloudVectorFromDepth(const DepthImage& depth_frame, const Camera& camera, float *points);
 
   bool colorImageFromImageMessage(
     const sensor_msgs::ImageConstPtr & image_msg,

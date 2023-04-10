@@ -53,6 +53,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_eigen
   nvblox_msgs
   cv_bridge
+  #pcl_ros
 )
 
 ###################################
@@ -149,7 +150,7 @@ add_executable(gpu_depth_to_cloud_node
   src/gpu_depth_to_cloud_node.cpp
 )
 
-target_link_libraries(gpu_depth_to_cloud_node ${PROJECT_NAME}_lib)
+target_link_libraries(gpu_depth_to_cloud_node ${PROJECT_NAME}_lib ) #${PCL_LIBRARIES}
 
 add_dependencies(gpu_depth_to_cloud_node
   ${catkin_EXPORTED_TARGETS}

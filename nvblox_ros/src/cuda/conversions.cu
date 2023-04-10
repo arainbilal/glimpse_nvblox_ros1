@@ -373,6 +373,93 @@ void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
   checkCudaErrors(cudaPeekAtLastError());
 }
 
+
+__device__
+void deproject_pixel_to_point_cuda(float points[3], const Camera * camera, const float pixel[2], const float * image)
+{
+    float x = (pixel[0] - camera->cu())/camera->fu();
+    float y = (pixel[1] - camera->cv())/camera->fv();
+
+    const int pixel_row = static_cast<int>(pixel[0]);
+    const int pixel_col = static_cast<int>(pixel[1]);
+    /// Note that I have swaped the pixel_col and pixel_row in accessing the image.
+    float depth = image::access<float>(pixel_col, pixel_row, camera->cols(), image);
+    if ((depth <= 0.0f) || std::isnan(depth))
+    {
+      return;
+    }
+    else
+    {
+        //printf("(%d,%d) %f\n",pixel[0], pixel[1], depth);
+        points[0] = depth * x;
+        points[1] = depth * y;
+        points[2] = depth;
+    }
+}
+
+
+__global__
+void kernel_deproject_depth_cuda(float * points, const Camera* camera, const float * image)
+{
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+  if (i >= (*camera).height() * (*camera).width())
+  {
+      //printf("Sanity check failed\n");
+      return;
+  }
+  int stride = blockDim.x * gridDim.x;
+  int a, b;
+
+  for (int j = i; j < (*camera).height() * (*camera).width(); j += stride)
+  {
+      //printf("%d\n",j);
+      b = j / (*camera).width();
+      a = j - b * (*camera).width();
+      const float pixel[] = { (float)a, (float)b };
+      deproject_pixel_to_point_cuda(points + j * 3, camera, pixel, image);
+  }
+}
+
+void RosConverter::pointcloudVectorFromDepth(const DepthImage& depth_frame, const Camera& camera, float * points)
+{
+    /// Reference: librealsense/src/cuda/cuda-pointcloud.cu
+    int count = camera.height()* camera.width();
+    constexpr int kThreadsPerThreadBlock = 512;
+    int numBlocks = count / kThreadsPerThreadBlock + 1;
+
+    std::cout<< "Number of points: " << count << std::endl;
+
+    float *dev_points = 0;      /// device points
+    //float *dev_depth = 0;  /// device depth image
+    Camera *dev_camera = 0;     /// device camera model
+    cudaError_t result;
+
+    result = cudaMalloc(&dev_points, count * sizeof(float) * 3);
+    assert(result == cudaSuccess);
+    //result = cudaMalloc(&dev_depth, count * sizeof(float));
+    //assert(result == cudaSuccess);
+    result = cudaMalloc(&dev_camera, sizeof(Camera));
+    assert(result == cudaSuccess);
+
+    //result = cudaMemcpy(dev_depth, &depth_frame.dataConstPtr(), count * sizeof(float), cudaMemcpyHostToDevice);
+    //assert(result == cudaSuccess);
+    result = cudaMemcpy(dev_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
+    assert(result == cudaSuccess);
+
+    kernel_deproject_depth_cuda<<<numBlocks, kThreadsPerThreadBlock, 0, cuda_stream_>>>(dev_points, dev_camera, depth_frame.dataConstPtr());
+    checkCudaErrors(cudaStreamSynchronize(cuda_stream_));
+    checkCudaErrors(cudaPeekAtLastError());
+
+    result = cudaMemcpy(points, dev_points, count * sizeof(float) * 3, cudaMemcpyDeviceToHost);
+    assert(result == cudaSuccess);
+
+    cudaFree(dev_points);
+    //cudaFree(dev_depth);
+    cudaFree(dev_camera);
+}
+
+#if(0)
+
 __global__ void populateCloudFromImageKernel(const float* image,
                                              int rows,
                                              int cols,
@@ -433,24 +520,7 @@ __global__ void populateCloudFromImageKernel(const float* image,
 
 }
 
-#if(0)
-void RosConverter::pointcloudFromDepth(const DepthImage& depth_frame, const Camera& camera, sensor_msgs::PointCloud2* pointcloud)
-{
-    /// Reference: nvblox_ros/src/lib/conversions/pointcloud_conversion.cu
-    const int num_points = depth_frame.rows() * depth_frame.cols();
-    std::cout<< "Number of points: " << num_points << std::endl;
 
-    /// Copy the depth points into pinned host memory
-    depth_points_host_.clear();
-    float center_x = camera.cu();//model.cx();
-    float center_y = camera.cv();//model.cy();
-    float constant_x = 1.0 / camera.fu();//model.fx();
-    float constant_y = 1.0 / camera.fv();//model.fy();
-
-}
-#endif
-
-#if(1)
 void RosConverter::pointcloudFromDepth(const DepthImage& depth_frame, const Camera& camera, sensor_msgs::PointCloud2* pointcloud)
 {
     /// Reference: See frustum.cu in nvblox
@@ -490,7 +560,6 @@ void RosConverter::pointcloudFromDepth(const DepthImage& depth_frame, const Came
     checkCudaErrors(cudaStreamSynchronize(cuda_stream_));
     checkCudaErrors(cudaPeekAtLastError());
 
-#if(0)
       /// Copy the pointcloud out
       max_index_host_ = max_index_device_.clone(MemoryType::kHost);
 
@@ -524,7 +593,6 @@ void RosConverter::pointcloudFromDepth(const DepthImage& depth_frame, const Came
       point_field.name = "intensity";
       point_field.offset += sizeof(float);
       pointcloud->fields.push_back(point_field);
-#endif
 }
 #endif
 

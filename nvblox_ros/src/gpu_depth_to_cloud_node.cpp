@@ -2,6 +2,9 @@
 /// Nvblox backend to perform conversions using CUDA
 #include <nvblox/core/cuda/warmup.h>
 #include <nvblox_ros/conversions.hpp>
+//#include <pcl/point_types.h>
+//#include <pcl_ros/point_cloud.h>
+//#include <pcl_conversions/pcl_conversions.h>
 
 GpuCloudNode::GpuCloudNode(ros::NodeHandle& nodeHandle)
   : nodeHandle_(nodeHandle)
@@ -53,9 +56,77 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
 
   /// Access the depth in the GPU
 
-  sensor_msgs::PointCloud2* out_cloud;
-  converter_.pointcloudFromDepth(depth_image_, camera, out_cloud);
+  tic = ros::Time::now();
+  int count = camera.height()* camera.width();
+  std::vector<float3> point(count, { 0,0,0 });
+  converter_.pointcloudVectorFromDepth(depth_image_, camera, (float*)point.data());
+  toc = ros::Time::now();
+  elapsed = toc.toSec() - tic.toSec();
+  ROS_INFO_STREAM("2. Depth to poincloud conversion took "<< elapsed << " sec");
 
+#if(1)
+  /// This conversion directly copy the points to the sensor_msgs
+  tic = ros::Time::now();
+  sensor_msgs::PointCloud2::Ptr cloud_msg(new sensor_msgs::PointCloud2);
+  cloud_msg->header = depth_img_ptr->header;
+  cloud_msg->height = depth_img_ptr->height;
+  cloud_msg->width  = depth_img_ptr->width;
+  cloud_msg->is_dense = false;
+  cloud_msg->is_bigendian = false;
+  sensor_msgs::PointCloud2Modifier pcd_modifier(*cloud_msg);
+  pcd_modifier.setPointCloud2FieldsByString(1, "xyz");
+  sensor_msgs::PointCloud2Iterator<float> iter_x(*cloud_msg, "x");
+  sensor_msgs::PointCloud2Iterator<float> iter_y(*cloud_msg, "y");
+  sensor_msgs::PointCloud2Iterator<float> iter_z(*cloud_msg, "z");
+  for(unsigned int i=0; i<count; ++i,++iter_x, ++iter_y, ++iter_z)
+  {
+      *iter_x = point[i].x;
+      *iter_y = point[i].y;
+      *iter_z = point[i].z;
+  }
+  toc = ros::Time::now();
+  elapsed = toc.toSec() - tic.toSec();
+  ROS_INFO_STREAM("3. Pointcloud2 sensor_msg conversion took "<< elapsed << " sec");
+
+  if (pub_point_cloud_.getNumSubscribers() > 0u)
+  {
+    pub_point_cloud_.publish (cloud_msg);
+  }
+#endif
+
+#if(0)
+  tic = ros::Time::now();
+  /// Fill in the pcl pointcloud msg and then convert using pcl_ros to sensor_msgs.
+  pcl::PointCloud<pcl::PointXYZ>::Ptr tmp(new pcl::PointCloud<pcl::PointXYZ>);
+  tmp->width = 0;
+  tmp->height = 1;
+  tmp->is_dense = false;
+  tmp->points.resize(tmp->width * tmp->height);
+  tmp->header.frame_id = depth_img_ptr->header.frame_id;
+
+  for (int i = 0; i<count; i++)
+  {
+      pcl::PointXYZ pt;
+      pt.x = point[i].x;
+      pt.y = point[i].y;
+      pt.z = point[i].z;
+      tmp->points.push_back(pt);
+      tmp->width++;
+  }
+  sensor_msgs::PointCloud2::Ptr cloud_msg(new sensor_msgs::PointCloud2);
+  cloud_msg->header = depth_img_ptr->header;
+  pcl::toROSMsg(*tmp, *cloud_msg);
+
+  toc = ros::Time::now();
+  elapsed = toc.toSec() - tic.toSec();
+  ROS_INFO_STREAM("3. Pointcloud2 sensor_msg conversion took "<< elapsed << " sec");
+
+  if (pub_point_cloud_.getNumSubscribers() > 0u)
+  {
+    pub_point_cloud_.publish (cloud_msg);
+  }
+
+#endif
 
 
 #if(0)
