@@ -2,9 +2,10 @@
 /// Nvblox backend to perform conversions using CUDA
 #include <nvblox/core/cuda/warmup.h>
 #include <nvblox_ros/conversions.hpp>
-//#include <pcl/point_types.h>
-//#include <pcl_ros/point_cloud.h>
-//#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/point_types.h>
+#include <pcl_ros/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/filters/voxel_grid.h>
 
 GpuCloudNode::GpuCloudNode(ros::NodeHandle& nodeHandle)
   : nodeHandle_(nodeHandle)
@@ -55,7 +56,6 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
   ROS_INFO_STREAM("1. Depth image to GPU cache conversion took "<< elapsed << " sec");
 
   /// Access the depth in the GPU
-
   tic = ros::Time::now();
   int count = camera.height()* camera.width();
   std::vector<float3> point(count, { 0,0,0 });
@@ -64,8 +64,11 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
   elapsed = toc.toSec() - tic.toSec();
   ROS_INFO_STREAM("2. Depth to poincloud conversion took "<< elapsed << " sec");
 
-#if(1)
-  /// This conversion directly copy the points to the sensor_msgs
+  /// Convert the vector to sensor_msgs::PointCloud2
+
+
+#if(0)
+  /// This conversion directly copy the 3D vector points to the sensor_msgs Pointcloud2
   tic = ros::Time::now();
   sensor_msgs::PointCloud2::Ptr cloud_msg(new sensor_msgs::PointCloud2);
   cloud_msg->header = depth_img_ptr->header;
@@ -95,8 +98,8 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
 #endif
 
 #if(0)
-  tic = ros::Time::now();
   /// Fill in the pcl pointcloud msg and then convert using pcl_ros to sensor_msgs.
+  tic = ros::Time::now();
   pcl::PointCloud<pcl::PointXYZ>::Ptr tmp(new pcl::PointCloud<pcl::PointXYZ>);
   tmp->width = 0;
   tmp->height = 1;
@@ -125,65 +128,56 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
   {
     pub_point_cloud_.publish (cloud_msg);
   }
-
 #endif
 
-
 #if(0)
-  /// 1. Conversion from image msg to PCL Pointcloud
-  ros::Time tic, toc;
-  double elapsed;
+  /// 3D vector to PCL conversion
   tic = ros::Time::now();
-  pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_msg(new pcl::PointCloud<pcl::PointXYZ>);
-  depthToCloudPCLConversion(depth_img_ptr, model_, pcl_msg);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr tmp(new pcl::PointCloud<pcl::PointXYZ>);
+  tmp->width = 0;
+  tmp->height = 1;
+  tmp->is_dense = false;
+  tmp->points.resize(tmp->width * tmp->height);
+  tmp->header.frame_id = depth_img_ptr->header.frame_id;
+
+  for (int i = 0; i<count; i++)
+  {
+      pcl::PointXYZ pt;
+      pt.x = point[i].x;
+      pt.y = point[i].y;
+      pt.z = point[i].z;
+      tmp->points.push_back(pt);
+      tmp->width++;
+  }
   toc = ros::Time::now();
   elapsed = toc.toSec() - tic.toSec();
-  ROS_INFO_STREAM("1. Depth image to PCL conversion took "<< elapsed << " sec");
+  ROS_INFO_STREAM("3. 3D vector to PCL conversion took "<< elapsed << " sec");
 
-  /// 2. Filter the pointcloud
+  /// Apply Voxel filter on high resolution image (1920x1080)
   tic = ros::Time::now();
   pcl::PointCloud<pcl::PointXYZ>::Ptr filter_msg(new pcl::PointCloud<pcl::PointXYZ>);
-  filterCloud(pcl_msg, filter_msg);
+  pcl::VoxelGrid<pcl::PointXYZ> voxelgrid;
+  voxelgrid.setInputCloud(tmp);
+  voxelgrid.setLeafSize(0.1, 0.1, 0.1);
+  voxelgrid.filter(*filter_msg);
   toc = ros::Time::now();
   elapsed = toc.toSec() - tic.toSec();
-  ROS_INFO_STREAM("2. Voxel filter took "<< elapsed << " sec");
+  ROS_INFO_STREAM("4. Voxel filter took "<< elapsed << " sec");
 
-  /// 3. Conversion PCL Pointcloud to sensor_msgs::Pointcloud
-  tic = ros::Time::now();
+  /// Convert from PCL to sensor_msg::Pointcloud2 using pcl_ros
   sensor_msgs::PointCloud2::Ptr cloud_msg(new sensor_msgs::PointCloud2);
   cloud_msg->header = depth_img_ptr->header;
   pcl::toROSMsg(*filter_msg, *cloud_msg);
-  toc = ros::Time::now();
-  elapsed = toc.toSec() - tic.toSec();
-  ROS_INFO_STREAM("3. PCL to sensor_msg conversion took "<< elapsed << " sec");
-
-
   if (pub_point_cloud_.getNumSubscribers() > 0u)
   {
     pub_point_cloud_.publish (cloud_msg);
   }
+
 #endif
+
 }
 
-#if(0)
-  /// Helper functions
-  void depthToCloudDirectConversion(const sensor_msgs::ImageConstPtr& depth_img_ptr,
-                                    const image_geometry::PinholeCameraModel& model,
-                                    sensor_msgs::PointCloud2::Ptr& cloud_msg);
 
-  void depthToCloudPCLConversion(const sensor_msgs::ImageConstPtr& depth_img_ptr,
-                                 const image_geometry::PinholeCameraModel& model,
-                                 pcl::PointCloud<pcl::PointXYZ>::Ptr& pcl_msg);
-
-  void filterCloud(const pcl::PointCloud<pcl::PointXYZ>::Ptr& in_cloud,
-                   pcl::PointCloud<pcl::PointXYZ>::Ptr& out_cloud);
-
-  static inline bool valid_16uc1(uint16_t depth) { return depth != 0; }
-  static inline float toMeters_16uc1(uint16_t depth) { return depth * 0.001f; } // originally mm
-
-  static inline bool valid_32fc1(float depth) { return std::isfinite(depth); }
-  static inline float toMeters_32fc1(float depth) { return depth; }
-#endif
 
 
 int main(int argc, char * argv[])

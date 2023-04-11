@@ -390,6 +390,7 @@ void deproject_pixel_to_point_cuda(float points[3], const Camera * camera, const
     }
     else
     {
+        /// ToDo: Apply the voxel filter to reduce the points before pushing
         //printf("(%d,%d) %f\n",pixel[0], pixel[1], depth);
         points[0] = depth * x;
         points[1] = depth * y;
@@ -430,19 +431,13 @@ void RosConverter::pointcloudVectorFromDepth(const DepthImage& depth_frame, cons
     std::cout<< "Number of points: " << count << std::endl;
 
     float *dev_points = 0;      /// device points
-    //float *dev_depth = 0;  /// device depth image
     Camera *dev_camera = 0;     /// device camera model
     cudaError_t result;
 
     result = cudaMalloc(&dev_points, count * sizeof(float) * 3);
     assert(result == cudaSuccess);
-    //result = cudaMalloc(&dev_depth, count * sizeof(float));
-    //assert(result == cudaSuccess);
     result = cudaMalloc(&dev_camera, sizeof(Camera));
     assert(result == cudaSuccess);
-
-    //result = cudaMemcpy(dev_depth, &depth_frame.dataConstPtr(), count * sizeof(float), cudaMemcpyHostToDevice);
-    //assert(result == cudaSuccess);
     result = cudaMemcpy(dev_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
     assert(result == cudaSuccess);
 
@@ -453,13 +448,22 @@ void RosConverter::pointcloudVectorFromDepth(const DepthImage& depth_frame, cons
     result = cudaMemcpy(points, dev_points, count * sizeof(float) * 3, cudaMemcpyDeviceToHost);
     assert(result == cudaSuccess);
 
+    /// Test
+    //host_vector<float3> *pointcloud;
+    //cudaMemcpy(pointcloud->data(), dev_points, count * sizeof(float) * 3, cudaMemcpyDeviceToHost);
+    //std::cout << "++++++   " << pointcloud->size() << std::endl;
+
     cudaFree(dev_points);
-    //cudaFree(dev_depth);
     cudaFree(dev_camera);
 }
 
-#if(0)
+void RosConverter::pointcloudMsgFromVector(const float *points, sensor_msgs::PointCloud2 *pointcloud_msg)
+{
 
+}
+
+
+#if(0)
 __global__ void populateCloudFromImageKernel(const float* image,
                                              int rows,
                                              int cols,
