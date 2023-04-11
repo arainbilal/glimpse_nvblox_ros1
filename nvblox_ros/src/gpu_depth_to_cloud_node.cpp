@@ -60,12 +60,22 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
   int count = camera.height()* camera.width();
   std::vector<float3> point(count, { 0,0,0 });
   converter_.pointcloudVectorFromDepth(depth_image_, camera, (float*)point.data());
+
   toc = ros::Time::now();
   elapsed = toc.toSec() - tic.toSec();
-  ROS_INFO_STREAM("2. Depth to poincloud conversion took "<< elapsed << " sec");
+  ROS_INFO_STREAM("2. Depth to stl cloud conversion took "<< elapsed << " sec");
 
-  /// Convert the vector to sensor_msgs::PointCloud2
 
+  tic = ros::Time::now();
+  std::vector<nvblox::Vector3f> eigen_points(count, {0,0,0});
+  converter_.pointcloudFromVector(point, eigen_points);
+  //nvblox::Pointcloud tmp_pointcloud(eigen_points, nvblox::MemoryType::kUnified);
+  toc = ros::Time::now();
+  elapsed = toc.toSec() - tic.toSec();
+  ROS_INFO_STREAM("3. Creating Poincloud conversion took "<< elapsed << " sec");
+
+  /// How to use the Eigen Vector3f in Host and Device?
+  /// https://stackoverflow.com/questions/65279760/how-to-pass-dynamic-eigen-vector-to-gpu-using-cuda
 
 #if(0)
   /// This conversion directly copy the 3D vector points to the sensor_msgs Pointcloud2

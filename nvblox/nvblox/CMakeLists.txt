@@ -86,6 +86,7 @@ add_library(nvblox_lib SHARED
     src/core/color.cpp
     src/core/cuda/blox.cu
     src/core/cuda/image_cuda.cu
+    src/core/cuda/pointcloud.cu
     src/core/cuda/warmup.cu
     src/core/image.cpp
     src/core/interpolation_3d.cpp

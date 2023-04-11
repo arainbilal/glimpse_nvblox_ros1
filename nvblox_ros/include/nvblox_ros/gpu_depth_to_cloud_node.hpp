@@ -50,5 +50,6 @@ private:
   /// Caches for GPU images
   nvblox::DepthImage depth_image_;
   nvblox::RosConverter converter_;
+  nvblox::Pointcloud nvcloud_;
 };     /// GpuCloudNode
 #endif /// GPU_DEPTH_TO_CLOUD_NODE_HPP_

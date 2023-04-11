@@ -448,20 +448,50 @@ void RosConverter::pointcloudVectorFromDepth(const DepthImage& depth_frame, cons
     result = cudaMemcpy(points, dev_points, count * sizeof(float) * 3, cudaMemcpyDeviceToHost);
     assert(result == cudaSuccess);
 
-    /// Test
-    //host_vector<float3> *pointcloud;
-    //cudaMemcpy(pointcloud->data(), dev_points, count * sizeof(float) * 3, cudaMemcpyDeviceToHost);
-    //std::cout << "++++++   " << pointcloud->size() << std::endl;
-
     cudaFree(dev_points);
     cudaFree(dev_camera);
 }
-
-void RosConverter::pointcloudMsgFromVector(const float *points, sensor_msgs::PointCloud2 *pointcloud_msg)
+void RosConverter::pointcloudFromVector(const std::vector<float3>& points, std::vector<Vector3f>& eigen_points)
 {
+    //std::cout << "STL points size: " << points.size() << std::endl;
+    /// We need to thrust this... It takes too long (0.35 sec)
+    for(int i=0; i<points.size(); i++)
+    {
+        Vector3f tmp;
+        tmp(0) = points[i].x;
+        tmp(1) = points[i].y;
+        tmp(2) = points[i].z;
+        eigen_points.push_back(tmp);
+    }
 
 }
 
+#if(0)
+void RosConverter::pointcloudFromVector(const float *points, const Camera& camera, Pointcloud *nvcloud)
+{
+    /// Reference: See pointcloud_conversions.cu in the latest nvblox_ros
+    int count = camera.height()* camera.width();
+    constexpr int kThreadsPerThreadBlock = 512;
+    int numBlocks = count / kThreadsPerThreadBlock + 1;
+
+    float *dev_points = 0;
+    Camera *dev_camera = 0;
+    Pointcloud * dev_cloud = 0; /// How to deal with device and host for the Pointcloud?
+    cudaError_t result;
+
+    result = cudaMalloc(&dev_points, count * sizeof(float) * 3);
+    assert(result == cudaSuccess);
+    result = cudaMalloc(&dev_camera, sizeof(Camera));
+    assert(result == cudaSuccess);
+    result = cudaMalloc(&dev_cloud, sizeof(Pointcloud));
+    assert(result == cudaSuccess);
+
+    result = cudaMemcpy(dev_points, points, count * sizeof(float) * 3, cudaMemcpyHostToDevice);
+    assert(result == cudaSuccess);
+    result = cudaMemcpy(dev_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
+    assert(result == cudaSuccess);
+}
+#endif
 
 #if(0)
 __global__ void populateCloudFromImageKernel(const float* image,

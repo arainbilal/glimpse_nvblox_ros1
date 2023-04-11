@@ -12,7 +12,7 @@
 #define NVBLOX_ROS__CONVERSIONS_HPP_
 
 #include <nvblox/nvblox.h>
-
+#include <nvblox/core/pointcloud.h>  /// Pointcloud support
 #include <nvblox_msgs/DistanceMapSlice.h>
 #include <nvblox_msgs/Mesh.h>
 #include <sensor_msgs/CameraInfo.h>
@@ -24,6 +24,7 @@
 
 #include <string>
 #include <vector>
+
 
 namespace nvblox
 {
@@ -67,8 +68,10 @@ public:
   /// Convert depth to 3D pointcloud vector
   void pointcloudVectorFromDepth(const DepthImage& depth_frame, const Camera& camera, float *points);
 
+
   /// Convert 3D pointcloud vector to sensor_msgs::PointCloud2
-  void pointcloudMsgFromVector(const float *points, sensor_msgs::PointCloud2 *pointcloud_msg);
+  //void pointcloudFromVector(const float *points, Vector3f *eigen_points);
+  void pointcloudFromVector(const std::vector<float3>& points, std::vector<Vector3f> &eigen_points);
 
   bool colorImageFromImageMessage(
     const sensor_msgs::ImageConstPtr & image_msg,
@@ -141,6 +144,7 @@ private:
   device_vector<Vector3f> depth_points_device_;
   unified_ptr<int> max_index_device_;
   unified_ptr<int> max_index_host_;
+
 };
 
 }  // namespace nvblox
