@@ -10,6 +10,44 @@
 
 namespace nvblox {
 
+void copyDevicePointcloudToMsg(const device_vector<PclPoint>& pcl_pointcloud_device,
+                               sensor_msgs::PointCloud2* pointcloud_msg)
+{
+  // Copy into the pointcloud message.
+  const int num_points = pcl_pointcloud_device.size();
+  size_t output_num_bytes = sizeof(PclPoint) * num_points;
+  pointcloud_msg->data.resize(output_num_bytes);
+  // Copy over all the points.
+  cudaMemcpy(pointcloud_msg->data.data(), pcl_pointcloud_device.data(),
+             output_num_bytes, cudaMemcpyDeviceToHost);
+
+  // Fill the other fields in the pointcloud_msg message.
+  pointcloud_msg->height = 1;
+  pointcloud_msg->width = num_points;
+  pointcloud_msg->point_step = sizeof(PclPoint);
+  pointcloud_msg->row_step = output_num_bytes;
+
+  // Populate the fields.
+  sensor_msgs::PointField point_field;
+  point_field.name = "x";
+  point_field.datatype = sensor_msgs::PointField::FLOAT32;
+  point_field.offset = 0;
+  point_field.count = 1;
+
+  pointcloud_msg->fields.push_back(point_field);
+  point_field.name = "y";
+  point_field.offset += sizeof(float);
+  pointcloud_msg->fields.push_back(point_field);
+  point_field.name = "z";
+  point_field.offset += sizeof(float);
+  pointcloud_msg->fields.push_back(point_field);
+  point_field.name = "intensity";
+  point_field.offset += sizeof(float);
+  pointcloud_msg->fields.push_back(point_field);
+}
+
+
+
 template <typename VoxelType>
 __device__ bool getVoxelIntensity(const VoxelType& voxel, float voxel_size,
                                   float* intensity);
@@ -375,7 +413,7 @@ void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
 
 
 __device__
-void deproject_pixel_to_point_cuda(float points[3], const Camera * camera, const float pixel[2], const float * image)
+void deproject_pixel_to_point_cuda(float points[3], const Camera * camera, const float pixel[2], const float * image, Vector3f *pointcloud_A, int *max_index)
 {
     float x = (pixel[0] - camera->cu())/camera->fu();
     float y = (pixel[1] - camera->cv())/camera->fv();
@@ -390,17 +428,25 @@ void deproject_pixel_to_point_cuda(float points[3], const Camera * camera, const
     }
     else
     {
-        /// ToDo: Apply the voxel filter to reduce the points before pushing
         //printf("(%d,%d) %f\n",pixel[0], pixel[1], depth);
-        points[0] = depth * x;
-        points[1] = depth * y;
-        points[2] = depth;
+        /// Keep the float points for the future but donot copy anything
+        //points[0] = depth * x;
+        //points[1] = depth * y;
+        //points[2] = depth;
+        int next_index = atomicAdd(max_index, 1);
+        Vector3f& vec = pointcloud_A[next_index];
+        //pointcloud_A->data()[0] = depth * x;
+        //pointcloud_A->data()[1] = depth * y;
+        //pointcloud_A->data()[2] = depth;
+        vec.data()[0] = depth * x;
+        vec.data()[1] = depth * y;
+        vec.data()[2] = depth;
     }
 }
 
 
 __global__
-void kernel_deproject_depth_cuda(float * points, const Camera* camera, const float * image)
+void kernel_deproject_depth_cuda(float * points, const Camera* camera, const float * image, Vector3f *pointcloud_A, int* max_index)
 {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
   if (i >= (*camera).height() * (*camera).width())
@@ -417,11 +463,11 @@ void kernel_deproject_depth_cuda(float * points, const Camera* camera, const flo
       b = j / (*camera).width();
       a = j - b * (*camera).width();
       const float pixel[] = { (float)a, (float)b };
-      deproject_pixel_to_point_cuda(points + j * 3, camera, pixel, image);
+      deproject_pixel_to_point_cuda(points + j * 3, camera, pixel, image, pointcloud_A, max_index);
   }
 }
 
-void RosConverter::pointcloudVectorFromDepth(const DepthImage& depth_frame, const Camera& camera, float * points)
+void RosConverter::pointcloudVectorFromDepth(const DepthImage& depth_frame, const Camera& camera, float * points, Pointcloud& pointcloud)
 {
     /// Reference: librealsense/src/cuda/cuda-pointcloud.cu
     int count = camera.height()* camera.width();
@@ -441,30 +487,52 @@ void RosConverter::pointcloudVectorFromDepth(const DepthImage& depth_frame, cons
     result = cudaMemcpy(dev_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
     assert(result == cudaSuccess);
 
-    kernel_deproject_depth_cuda<<<numBlocks, kThreadsPerThreadBlock, 0, cuda_stream_>>>(dev_points, dev_camera, depth_frame.dataConstPtr());
+    max_index_device_ = make_unified<int>(MemoryType::kDevice);
+    max_index_device_.setZero();
+
+    Pointcloud pointcloud_A(count, MemoryType::kDevice);
+    kernel_deproject_depth_cuda<<<numBlocks, kThreadsPerThreadBlock, 0, cuda_stream_>>>(
+       dev_points, dev_camera, depth_frame.dataConstPtr(), pointcloud_A.dataPtr(), max_index_device_.get());
     checkCudaErrors(cudaStreamSynchronize(cuda_stream_));
     checkCudaErrors(cudaPeekAtLastError());
 
     result = cudaMemcpy(points, dev_points, count * sizeof(float) * 3, cudaMemcpyDeviceToHost);
     assert(result == cudaSuccess);
 
+    /// Copy the pointcloud to the host
+    result = cudaMemcpy(pointcloud.dataPtr(), pointcloud_A.dataConstPtr(), sizeof(Vector3f) * count, cudaMemcpyDeviceToHost);
+    assert(result == cudaSuccess);
+
     cudaFree(dev_points);
     cudaFree(dev_camera);
 }
-void RosConverter::pointcloudFromVector(const std::vector<float3>& points, std::vector<Vector3f>& eigen_points)
-{
-    //std::cout << "STL points size: " << points.size() << std::endl;
-    /// We need to thrust this... It takes too long (0.35 sec)
-    for(int i=0; i<points.size(); i++)
-    {
-        Vector3f tmp;
-        tmp(0) = points[i].x;
-        tmp(1) = points[i].y;
-        tmp(2) = points[i].z;
-        eigen_points.push_back(tmp);
-    }
 
+
+struct Vector3fToPcl {
+  __host__ __device__ PclPoint operator()(const Vector3f& vec) const {
+    PclPoint point;
+    point.x = vec.x();
+    point.y = vec.y();
+    point.z = vec.z();
+    point.intensity = 1.0;
+    return point;
+  };
+};
+
+void RosConverter::pointcloudMsgFromPointcloud(const Pointcloud& pointcloud,
+                                               sensor_msgs::PointCloud2* pointcloud_msg)
+{
+    pointcloud_device_.resize(pointcloud.size());
+    thrust::transform(thrust::device, pointcloud.points().begin(),
+                      pointcloud.points().end(), pointcloud_device_.begin(),
+                      Vector3fToPcl());
+    copyDevicePointcloudToMsg(pointcloud_device_, pointcloud_msg);
 }
+
+
+
+
+
 
 #if(0)
 void RosConverter::pointcloudFromVector(const float *points, const Camera& camera, Pointcloud *nvcloud)

@@ -58,27 +58,32 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
   /// Access the depth in the GPU
   tic = ros::Time::now();
   int count = camera.height()* camera.width();
-  std::vector<float3> point(count, { 0,0,0 });
-  converter_.pointcloudVectorFromDepth(depth_image_, camera, (float*)point.data());
+  std::vector<float3> point(count, { 0,0,0 }); /// Keep this for now and can be removed in the future.
+  nvblox::Pointcloud pointcloud(count, nvblox::MemoryType::kHost);
+  converter_.pointcloudVectorFromDepth(depth_image_, camera, (float*)point.data(), pointcloud);
 
   toc = ros::Time::now();
   elapsed = toc.toSec() - tic.toSec();
-  ROS_INFO_STREAM("2. Depth to stl cloud conversion took "<< elapsed << " sec");
+  ROS_INFO_STREAM("2. Depth to pointcloud conversion took "<< elapsed << " sec");
 
-
+  /// Convert Pointcloud to sensor_msgs
   tic = ros::Time::now();
-  std::vector<nvblox::Vector3f> eigen_points(count, {0,0,0});
-  converter_.pointcloudFromVector(point, eigen_points);
-  //nvblox::Pointcloud tmp_pointcloud(eigen_points, nvblox::MemoryType::kUnified);
+  sensor_msgs::PointCloud2 pointcloud_msg;
+  converter_.pointcloudMsgFromPointcloud(pointcloud, &pointcloud_msg);
+  pointcloud_msg.header.frame_id = depth_img_ptr->header.frame_id;
+  pointcloud_msg.header.stamp = depth_img_ptr->header.stamp;
   toc = ros::Time::now();
   elapsed = toc.toSec() - tic.toSec();
-  ROS_INFO_STREAM("3. Creating Poincloud conversion took "<< elapsed << " sec");
+  ROS_INFO_STREAM("3. Pointcloud to msg conversion took "<< elapsed << " sec");
+  if (pub_point_cloud_.getNumSubscribers() > 0u)
+  {
+    pub_point_cloud_.publish(pointcloud_msg);
+  }
 
-  /// How to use the Eigen Vector3f in Host and Device?
-  /// https://stackoverflow.com/questions/65279760/how-to-pass-dynamic-eigen-vector-to-gpu-using-cuda
-
+/// This conversion directly copy the 3D vector points to the sensor_msgs Pointcloud2
+///
+///
 #if(0)
-  /// This conversion directly copy the 3D vector points to the sensor_msgs Pointcloud2
   tic = ros::Time::now();
   sensor_msgs::PointCloud2::Ptr cloud_msg(new sensor_msgs::PointCloud2);
   cloud_msg->header = depth_img_ptr->header;
@@ -107,8 +112,11 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
   }
 #endif
 
+
+/// Fill in the pcl pointcloud msg and then convert using pcl_ros to sensor_msgs.
+///
+///
 #if(0)
-  /// Fill in the pcl pointcloud msg and then convert using pcl_ros to sensor_msgs.
   tic = ros::Time::now();
   pcl::PointCloud<pcl::PointXYZ>::Ptr tmp(new pcl::PointCloud<pcl::PointXYZ>);
   tmp->width = 0;
@@ -140,8 +148,10 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
   }
 #endif
 
+/// 3D vector to PCL conversion
+///
+///
 #if(0)
-  /// 3D vector to PCL conversion
   tic = ros::Time::now();
   pcl::PointCloud<pcl::PointXYZ>::Ptr tmp(new pcl::PointCloud<pcl::PointXYZ>);
   tmp->width = 0;
@@ -182,9 +192,7 @@ void GpuCloudNode::depthImageCallback(const sensor_msgs::ImageConstPtr& depth_im
   {
     pub_point_cloud_.publish (cloud_msg);
   }
-
 #endif
-
 }
 
 

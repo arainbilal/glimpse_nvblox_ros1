@@ -24,7 +24,7 @@
 
 #include <string>
 #include <vector>
-
+#include <sensor_msgs/PointCloud2.h>
 
 namespace nvblox
 {
@@ -51,6 +51,10 @@ struct alignas (16) PclPoint
   float intensity;
 };
 
+void copyDevicePointcloudToMsg(const device_vector<PclPoint> & pcl_pointcloud_device,
+                               sensor_msgs::PointCloud2 * pointcloud_msg);
+
+
 // Helper class to store all the buffers.
 class RosConverter
 {
@@ -66,12 +70,11 @@ public:
     DepthImage * depth_frame);
 
   /// Convert depth to 3D pointcloud vector
-  void pointcloudVectorFromDepth(const DepthImage& depth_frame, const Camera& camera, float *points);
+  void pointcloudVectorFromDepth(const DepthImage& depth_frame, const Camera& camera, float *points, Pointcloud& pointcloud);
+
+  void pointcloudMsgFromPointcloud(const Pointcloud & pointcloud, sensor_msgs::PointCloud2 * pointcloud_msg);
 
 
-  /// Convert 3D pointcloud vector to sensor_msgs::PointCloud2
-  //void pointcloudFromVector(const float *points, Vector3f *eigen_points);
-  void pointcloudFromVector(const std::vector<float3>& points, std::vector<Vector3f> &eigen_points);
 
   bool colorImageFromImageMessage(
     const sensor_msgs::ImageConstPtr & image_msg,
